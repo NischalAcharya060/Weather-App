@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSun, faCloud, faCloudSun, faCloudRain, faSnowflake, faWind } from '@fortawesome/free-solid-svg-icons';
+import './Weather.css';
 
 const Weather = () => {
     const [location, setLocation] = useState({ lat: null, lon: null });
     const [weatherData, setWeatherData] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [currentTime, setCurrentTime] = useState(new Date());
 
     useEffect(() => {
         const fetchWeather = async () => {
@@ -46,7 +48,7 @@ const Weather = () => {
                 try {
                     setLoading(true);
                     const response = await axios.get(
-                        `https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lon}&appid=54284c1ca833c8beae11a7a3f462a87e&units=metric`
+                        `https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lon}&appid=eefe7d9d5a2caef30480922620b18596&units=metric`
                     );
                     setWeatherData(response.data);
                 } catch (error) {
@@ -58,6 +60,14 @@ const Weather = () => {
             fetchData();
         }
     }, [location]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setCurrentTime(new Date());
+        }, 60000);
+
+        return () => clearInterval(interval);
+    }, []);
 
     const weatherIcons = {
         '01d': faSun,     // clear sky day
@@ -85,26 +95,27 @@ const Weather = () => {
     };
 
     if (loading) {
-        return <div>Loading...</div>;
+        return <div className="weather-card loading">Loading...</div>;
     }
 
     if (!weatherData) {
-        return <div>No weather data available</div>;
+        return <div className="weather-card">No weather data available</div>;
     }
 
     const iconCode = weatherData.weather[0].icon;
     const IconComponent = getWeatherIcon(iconCode);
 
     return (
-        <div>
+        <div className="weather-card">
             <h1>Weather in {weatherData.name}</h1>
             <div className="weather-icon">
                 <FontAwesomeIcon icon={IconComponent} size="2x" />
             </div>
-            <p>Temperature: {weatherData.main.temp} °C</p>
-            <p>Weather: {weatherData.weather[0].description}</p>
+            <p className="temperature">Temperature: {weatherData.main.temp} °C</p>
+            <p className="weather-description">Weather: {weatherData.weather[0].description}</p>
             <p>Humidity: {weatherData.main.humidity} %</p>
             <p>Wind Speed: {weatherData.wind.speed} m/s</p>
+            <p className="current-time">Current Time: {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
         </div>
     );
 };
