@@ -9,6 +9,7 @@ const Weather = () => {
     const [weatherData, setWeatherData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [currentTime, setCurrentTime] = useState(new Date());
+    const [searchQuery, setSearchQuery] = useState('');
 
     useEffect(() => {
         const fetchWeather = async () => {
@@ -43,7 +44,7 @@ const Weather = () => {
     }, []);
 
     useEffect(() => {
-        if (location.lat && location.lon) {
+        if (location.lat && location.lon && !searchQuery) {
             const fetchData = async () => {
                 try {
                     setLoading(true);
@@ -59,7 +60,7 @@ const Weather = () => {
             };
             fetchData();
         }
-    }, [location]);
+    }, [location, searchQuery]);
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -68,6 +69,20 @@ const Weather = () => {
 
         return () => clearInterval(interval);
     }, []);
+
+    const handleSearch = async () => {
+        try {
+            setLoading(true);
+            const response = await axios.get(
+                `https://api.openweathermap.org/data/2.5/weather?q=${searchQuery}&appid=eefe7d9d5a2caef30480922620b18596&units=metric`
+            );
+            setWeatherData(response.data);
+        } catch (error) {
+            console.error('Error fetching searched weather data', error);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const weatherIcons = {
         '01d': faSun,     // clear sky day
@@ -91,7 +106,7 @@ const Weather = () => {
     };
 
     const getWeatherIcon = (iconCode) => {
-        return weatherIcons[iconCode] || faSun; // default to sun icon if no match found
+        return weatherIcons[iconCode] || faSun;
     };
 
     if (loading) {
@@ -102,20 +117,32 @@ const Weather = () => {
         return <div className="weather-card">No weather data available</div>;
     }
 
-    const iconCode = weatherData.weather[0].icon;
-    const IconComponent = getWeatherIcon(iconCode);
+    const currentIconCode = weatherData.weather[0].icon;
+    const currentIconComponent = getWeatherIcon(currentIconCode);
 
     return (
         <div className="weather-card">
-            <h1>Weather in {weatherData.name}</h1>
-            <div className="weather-icon">
-                <FontAwesomeIcon icon={IconComponent} size="2x" />
+            <h1>Weather</h1>
+            <div className="current-weather">
+                <h2>Location: {weatherData.name}</h2>
+                <div className="weather-icon">
+                    <FontAwesomeIcon icon={currentIconComponent} size="2x" />
+                </div>
+                <p className="temperature">Temperature: {weatherData.main.temp} °C</p>
+                <p className="weather-description">Weather: {weatherData.weather[0].description}</p>
+                <p>Humidity: {weatherData.main.humidity} %</p>
+                <p>Wind Speed: {weatherData.wind.speed} m/s</p>
+                <p className="current-time">Current Time: {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
             </div>
-            <p className="temperature">Temperature: {weatherData.main.temp} °C</p>
-            <p className="weather-description">Weather: {weatherData.weather[0].description}</p>
-            <p>Humidity: {weatherData.main.humidity} %</p>
-            <p>Wind Speed: {weatherData.wind.speed} m/s</p>
-            <p className="current-time">Current Time: {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            <div className="search-weather">
+                <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search for a city"
+                />
+                <button onClick={handleSearch}>Search</button>
+            </div>
         </div>
     );
 };

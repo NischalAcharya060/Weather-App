@@ -49,3 +49,39 @@ body {
     color: #777;
     margin-top: 16px;
 }
+
+.search-weather {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.search-weather input {
+    width: calc(100% - 110px);
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+    margin-right: 10px;
+}
+
+.search-weather input:focus {
+    border-color: #007bff;
+    outline: none;
+}
+
+.search-weather button {
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.search-weather button:hover {
+    background-color: #0056b3;
+}
