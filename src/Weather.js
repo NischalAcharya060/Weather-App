@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faSun, faCloud, faCloudSun, faCloudRain, faSnowflake, faWind } from '@fortawesome/free-solid-svg-icons';
+import { faSun, faCloud, faCloudSun, faCloudRain, faSnowflake, faWind, faSearch } from '@fortawesome/free-solid-svg-icons';
+import { Typography, TextField, CircularProgress, Grid, Card, CardContent, Switch, FormControlLabel, IconButton, Tooltip } from '@mui/material';
 import './Weather.css';
 
 const Weather = () => {
@@ -10,6 +11,7 @@ const Weather = () => {
     const [loading, setLoading] = useState(true);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [searchQuery, setSearchQuery] = useState('');
+    const [unit, setUnit] = useState('metric'); // 'metric' for Celsius, 'imperial' for Fahrenheit
 
     useEffect(() => {
         const fetchWeather = async () => {
@@ -49,7 +51,7 @@ const Weather = () => {
                 try {
                     setLoading(true);
                     const response = await axios.get(
-                        `https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lon}&appid=eefe7d9d5a2caef30480922620b18596&units=metric`
+                        `https://api.openweathermap.org/data/2.5/weather?lat=${location.lat}&lon=${location.lon}&appid=eefe7d9d5a2caef30480922620b18596&units=${unit}`
                     );
                     setWeatherData(response.data);
                 } catch (error) {
@@ -60,7 +62,7 @@ const Weather = () => {
             };
             fetchData();
         }
-    }, [location, searchQuery]);
+    }, [location, searchQuery, unit]);
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -74,7 +76,7 @@ const Weather = () => {
         try {
             setLoading(true);
             const response = await axios.get(
-                `https://api.openweathermap.org/data/2.5/weather?q=${searchQuery}&appid=eefe7d9d5a2caef30480922620b18596&units=metric`
+                `https://api.openweathermap.org/data/2.5/weather?q=${searchQuery}&appid=eefe7d9d5a2caef30480922620b18596&units=${unit}`
             );
             setWeatherData(response.data);
         } catch (error) {
@@ -109,41 +111,88 @@ const Weather = () => {
         return weatherIcons[iconCode] || faSun;
     };
 
+    const handleUnitChange = () => {
+        setUnit(unit === 'metric' ? 'imperial' : 'metric');
+    };
+
+    const handleKeyPress = (event) => {
+        if (event.key === 'Enter') {
+            handleSearch();
+        }
+    };
+
     if (loading) {
-        return <div className="weather-card loading">Loading...</div>;
+        return (
+            <div className="weather-card loading">
+                <CircularProgress />
+                <Typography variant="body1">Loading...</Typography>
+            </div>
+        );
     }
 
     if (!weatherData) {
-        return <div className="weather-card">No weather data available</div>;
+        return (
+            <div className="weather-card">
+                <Typography variant="body1">No weather data available</Typography>
+            </div>
+        );
     }
 
     const currentIconCode = weatherData.weather[0].icon;
     const currentIconComponent = getWeatherIcon(currentIconCode);
 
     return (
-        <div className="weather-card">
-            <h1>Weather</h1>
-            <div className="current-weather">
-                <h2>Location: {weatherData.name}</h2>
-                <div className="weather-icon">
-                    <FontAwesomeIcon icon={currentIconComponent} size="2x" />
-                </div>
-                <p className="temperature">Temperature: {weatherData.main.temp} °C</p>
-                <p className="weather-description">Weather: {weatherData.weather[0].description}</p>
-                <p>Humidity: {weatherData.main.humidity} %</p>
-                <p>Wind Speed: {weatherData.wind.speed} m/s</p>
-                <p className="current-time">Current Time: {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-            </div>
-            <div className="search-weather">
-                <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search for a city"
-                />
-                <button onClick={handleSearch}>Search</button>
-            </div>
-        </div>
+        <Card className="weather-card sky-background">
+            <CardContent>
+                <Grid container spacing={3} justifyContent="center" alignItems="center">
+                    <Grid item xs={12} sm={6} textAlign="center">
+                        <Typography variant="h5" component="h1" gutterBottom>
+                            Weather in {weatherData.name}
+                        </Typography>
+                        <div className="weather-icon">
+                            <FontAwesomeIcon icon={currentIconComponent} size="3x" />
+                        </div>
+                        <Typography variant="body1" className="temperature">
+                            Temperature: {weatherData.main.temp} °{unit === 'metric' ? 'C' : 'F'}
+                        </Typography>
+                        <Typography variant="body1" className="weather-description">
+                            Weather: {weatherData.weather[0].description}
+                        </Typography>
+                        <Typography variant="body1">Humidity: {weatherData.main.humidity} %</Typography>
+                        <Typography variant="body1">
+                            Wind Speed: {weatherData.wind.speed} {unit === 'metric' ? 'm/s' : 'mph'}
+                        </Typography>
+                        <Typography variant="body1" className="current-time" gutterBottom>
+                            Current Time: {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} textAlign="center">
+                        <TextField
+                            fullWidth
+                            variant="outlined"
+                            label="Search for a city"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onKeyPress={handleKeyPress}
+                            InputProps={{
+                                endAdornment: (
+                                    <Tooltip title="Search">
+                                        <IconButton onClick={handleSearch} color="primary">
+                                            <FontAwesomeIcon icon={faSearch} />
+                                        </IconButton>
+                                    </Tooltip>
+                                ),
+                            }}
+                        />
+                        <FormControlLabel
+                            control={<Switch checked={unit === 'imperial'} onChange={handleUnitChange} />}
+                            label={unit === 'metric' ? 'Switch to Fahrenheit' : 'Switch to Celsius'}
+                            style={{ marginTop: 10 }}
+                        />
+                    </Grid>
+                </Grid>
+            </CardContent>
+        </Card>
     );
 };
 

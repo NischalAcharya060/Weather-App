@@ -14,13 +14,14 @@ body {
 .weather-card {
     position: relative;
     width: 90%;
-    max-width: 400px;
+    max-width: 800px;
     padding: 20px;
     background-color: rgba(255, 255, 255, 0.9);
     border-radius: 12px;
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
     text-align: center;
     overflow: hidden;
+    margin-top: 40px;
 }
 
 .weather-card.loading {
@@ -36,6 +37,7 @@ body {
     font-size: 24px;
     font-weight: bold;
     margin-bottom: 10px;
+    color: #333;
 }
 
 .weather-description {
@@ -50,6 +52,10 @@ body {
     margin-top: 16px;
 }
 
+.weather-card.sky-background {
+    background: linear-gradient(to bottom, #b4e3f2, #6ab4e0);
+}
+
 .search-weather {
     display: flex;
     justify-content: center;
@@ -58,21 +64,22 @@ body {
 }
 
 .search-weather input {
-    width: calc(100% - 110px);
-    padding: 10px;
+    width: calc(100% - 130px);
+    padding: 12px;
     border: 1px solid #ddd;
     border-radius: 5px;
     font-size: 16px;
     margin-right: 10px;
+    outline: none;
+    transition: border-color 0.3s ease;
 }
 
 .search-weather input:focus {
     border-color: #007bff;
-    outline: none;
 }
 
 .search-weather button {
-    padding: 10px 20px;
+    padding: 12px 24px;
     background-color: #007bff;
     color: white;
     border: none;
