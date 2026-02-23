@@ -1,6 +1,6 @@
 # Weather App
 
-![Weather App](https://i.postimg.cc/X7DDw7GJ/Weather-app.png)
+![Weather App](https://i.postimg.cc/zGzH28tS/Weather_Deck.png)
 
 ## Description
 
