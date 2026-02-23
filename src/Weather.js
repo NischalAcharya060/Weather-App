@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const FONTS = `
   @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
@@ -175,22 +175,24 @@ const UVGauge = ({ value }) => {
 };
 
 export default function Weather() {
-    const [weather, setWeather]         = useState(null);
-    const [forecast, setForecast]       = useState([]);
-    const [hourly, setHourly]           = useState([]);
-    const [cityName, setCityName]       = useState('');
-    const [coords, setCoords]           = useState(null);
-    const [loading, setLoading]         = useState(true);
-    const [error, setError]             = useState('');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [suggestions, setSuggestions] = useState([]);
+    const [weather, setWeather]               = useState(null);
+    const [forecast, setForecast]             = useState([]);
+    const [hourly, setHourly]                 = useState([]);
+    const [cityName, setCityName]             = useState('');
+    const [coords, setCoords]                 = useState(null);
+    const [loading, setLoading]               = useState(true);
+    const [error, setError]                   = useState('');
+    const [searchQuery, setSearchQuery]       = useState('');
+    const [suggestions, setSuggestions]       = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
-    const [unit, setUnit]               = useState('celsius');
-    const [activeTab, setActiveTab]     = useState('now');
-    const [currentTime, setCurrentTime] = useState(new Date());
-    const searchTimeout = useRef(null);
-    const searchWrapperRef = useRef(null);
+    const [unit, setUnit]                     = useState('celsius');
+    const [activeTab, setActiveTab]           = useState('now');
+    const [currentTime, setCurrentTime]       = useState(new Date());
+    const [inputFocused, setInputFocused]     = useState(false);
+    const searchTimeout                       = useRef(null);
+    const searchWrapperRef                    = useRef(null);
 
+    // ── Inject fonts ──────────────────────────────────────────────────────────
     useEffect(() => {
         const s = document.createElement('style');
         s.textContent = FONTS;
@@ -198,22 +200,91 @@ export default function Weather() {
         return () => document.head.removeChild(s);
     }, []);
 
+    // ── Clock ─────────────────────────────────────────────────────────────────
     useEffect(() => {
         const t = setInterval(() => setCurrentTime(new Date()), 1000);
         return () => clearInterval(t);
     }, []);
 
-    // Close dropdown when clicking outside
+    // ── Close dropdown on outside click ──────────────────────────────────────
     useEffect(() => {
-        const handleClickOutside = (e) => {
+        const handler = (e) => {
             if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target)) {
                 setShowSuggestions(false);
             }
         };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
     }, []);
 
+    // ── FIX 1: wrap fetchWeather in useCallback so it's a stable reference ──
+    // This fixes: "React Hook useEffect has a missing dependency: 'fetchWeather'"
+    const fetchWeather = useCallback(async (lat, lon) => {
+        setLoading(true);
+        setError('');
+        const isF  = unit === 'fahrenheit';
+        const tempU = isF ? 'fahrenheit' : 'celsius';
+        const windU = isF ? 'mph' : 'ms';
+        try {
+            const url =
+                `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+                `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,` +
+                `wind_speed_10m,wind_direction_10m,surface_pressure,visibility,cloud_cover,uv_index` +
+                `&hourly=temperature_2m,weather_code,precipitation_probability,relative_humidity_2m` +
+                `&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,uv_index_max` +
+                `&wind_speed_unit=${windU}&temperature_unit=${tempU}&timezone=auto&forecast_days=7`;
+
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('API error');
+            const data = await res.json();
+            const c = data.current;
+
+            setWeather({
+                temp:        Math.round(c.temperature_2m),
+                feelsLike:   Math.round(c.apparent_temperature),
+                humidity:    c.relative_humidity_2m,
+                windSpeed:   c.wind_speed_10m,
+                windDir:     c.wind_direction_10m,
+                pressure:    Math.round(c.surface_pressure),
+                visibility:  (c.visibility / 1000).toFixed(1),
+                clouds:      c.cloud_cover,
+                uvIndex:     Math.round(c.uv_index ?? 0),
+                code:        c.weather_code,
+                condition:   wmoToCondition(c.weather_code),
+                description: wmoToLabel(c.weather_code),
+            });
+
+            const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            setForecast(data.daily.time.map((t, i) => ({
+                day:       days[new Date(t).getDay()],
+                high:      Math.round(data.daily.temperature_2m_max[i]),
+                low:       Math.round(data.daily.temperature_2m_min[i]),
+                condition: wmoToCondition(data.daily.weather_code[i]),
+                precip:    Math.round(data.daily.precipitation_sum[i] ?? 0),
+                sunrise:   data.daily.sunrise[i]?.split('T')[1] ?? '--',
+                sunset:    data.daily.sunset[i]?.split('T')[1] ?? '--',
+                uv:        Math.round(data.daily.uv_index_max[i] ?? 0),
+            })));
+
+            const now = new Date();
+            setHourly(
+                data.hourly.time
+                    .map((t, i) => ({
+                        time:   t,
+                        temp:   Math.round(data.hourly.temperature_2m[i]),
+                        code:   data.hourly.weather_code[i],
+                        precip: data.hourly.precipitation_probability[i] ?? 0,
+                    }))
+                    .filter(h => new Date(h.time) >= now)
+                    .slice(0, 8)
+            );
+        } catch {
+            setError('Could not load weather. Please try another city.');
+        }
+        setLoading(false);
+    }, [unit]); // unit is the only external variable used inside
+
+    // ── Auto-detect location ──────────────────────────────────────────────────
     useEffect(() => {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
@@ -227,78 +298,24 @@ export default function Weather() {
         } else {
             loadCity('Kathmandu', 27.7172, 85.3240);
         }
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // ^ intentionally runs once on mount only; loadCity / reverseGeocode are stable helpers
 
+    // ── Re-fetch when coords or unit changes ──────────────────────────────────
     useEffect(() => {
         if (coords) fetchWeather(coords.lat, coords.lon);
-    }, [coords, unit]);
+    }, [coords, fetchWeather]); // fetchWeather is now stable via useCallback
 
     const reverseGeocode = async (lat, lon) => {
         try {
-            const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+            const r = await fetch(
+                `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+            );
             const d = await r.json();
             setCityName(d.city || d.locality || d.principalSubdivision || d.countryName || 'Your Location');
         } catch {
             setCityName('Your Location');
         }
-    };
-
-    const fetchWeather = async (lat, lon) => {
-        setLoading(true); setError('');
-        const isF = unit === 'fahrenheit';
-        const tempU = isF ? 'fahrenheit' : 'celsius';
-        const windU = isF ? 'mph' : 'ms';
-        try {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
-                + `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,`
-                + `wind_speed_10m,wind_direction_10m,surface_pressure,visibility,cloud_cover,uv_index`
-                + `&hourly=temperature_2m,weather_code,precipitation_probability,relative_humidity_2m`
-                + `&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,uv_index_max`
-                + `&wind_speed_unit=${windU}&temperature_unit=${tempU}&timezone=auto&forecast_days=7`;
-
-            const res = await fetch(url);
-            if (!res.ok) throw new Error('API error');
-            const data = await res.json();
-            const c = data.current;
-
-            setWeather({
-                temp: Math.round(c.temperature_2m),
-                feelsLike: Math.round(c.apparent_temperature),
-                humidity: c.relative_humidity_2m,
-                windSpeed: c.wind_speed_10m,
-                windDir: c.wind_direction_10m,
-                pressure: Math.round(c.surface_pressure),
-                visibility: (c.visibility / 1000).toFixed(1),
-                clouds: c.cloud_cover,
-                uvIndex: Math.round(c.uv_index ?? 0),
-                code: c.weather_code,
-                condition: wmoToCondition(c.weather_code),
-                description: wmoToLabel(c.weather_code),
-            });
-
-            const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-            setForecast(data.daily.time.map((t,i) => ({
-                day: days[new Date(t).getDay()],
-                high: Math.round(data.daily.temperature_2m_max[i]),
-                low: Math.round(data.daily.temperature_2m_min[i]),
-                condition: wmoToCondition(data.daily.weather_code[i]),
-                precip: Math.round(data.daily.precipitation_sum[i] ?? 0),
-                sunrise: data.daily.sunrise[i]?.split('T')[1] ?? '--',
-                sunset: data.daily.sunset[i]?.split('T')[1] ?? '--',
-                uv: Math.round(data.daily.uv_index_max[i] ?? 0),
-            })));
-
-            const now = new Date();
-            setHourly(
-                data.hourly.time
-                    .map((t,i) => ({ time:t, temp:Math.round(data.hourly.temperature_2m[i]), code:data.hourly.weather_code[i], precip:data.hourly.precipitation_probability[i]??0 }))
-                    .filter(h => new Date(h.time) >= now)
-                    .slice(0,8)
-            );
-        } catch {
-            setError('Could not load weather. Please try another city.');
-        }
-        setLoading(false);
     };
 
     const loadCity = (name, lat, lon) => {
@@ -312,12 +329,17 @@ export default function Weather() {
         if (val.length < 2) { setSuggestions([]); setShowSuggestions(false); return; }
         searchTimeout.current = setTimeout(async () => {
             try {
-                const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(val)}&count=6&language=en&format=json`);
+                const r = await fetch(
+                    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(val)}&count=6&language=en&format=json`
+                );
                 const d = await r.json();
                 const results = d.results ?? [];
                 setSuggestions(results);
                 setShowSuggestions(results.length > 0);
-            } catch { setSuggestions([]); setShowSuggestions(false); }
+            } catch {
+                setSuggestions([]);
+                setShowSuggestions(false);
+            }
         }, 350);
     };
 
@@ -325,24 +347,30 @@ export default function Weather() {
         setShowSuggestions(false);
         setSuggestions([]);
         setSearchQuery('');
-        loadCity(`${s.name}${s.country ? ', '+s.country : ''}`, s.latitude, s.longitude);
+        loadCity(`${s.name}${s.country ? ', ' + s.country : ''}`, s.latitude, s.longitude);
     };
 
     const quickSearch = async (name) => {
         try {
-            const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1`);
+            const r = await fetch(
+                `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1`
+            );
             const d = await r.json();
             if (d.results?.[0]) selectSuggestion(d.results[0]);
         } catch {}
     };
 
-    const condKey = weather?.condition ?? 'clear';
-    const cond = CONDITIONS[condKey];
-    const tempSuffix = unit === 'celsius' ? '°C' : '°F';
-    const windSuffix = unit === 'celsius' ? 'm/s' : 'mph';
-    const today = forecast[0];
-    const windDirLabel = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW','N'][Math.round((weather?.windDir??0)/22.5)];
+    // ── Derived values ────────────────────────────────────────────────────────
+    const condKey      = weather?.condition ?? 'clear';
+    const cond         = CONDITIONS[condKey];
+    const tempSuffix   = unit === 'celsius' ? '°C' : '°F';
+    const windSuffix   = unit === 'celsius' ? 'm/s' : 'mph';
+    const today        = forecast[0];
+    const windDirLabel = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW','N'][
+        Math.round((weather?.windDir ?? 0) / 22.5)
+        ];
 
+    // ── Loading screen ────────────────────────────────────────────────────────
     if (!weather && loading) return (
         <div style={{minHeight:'100vh',background:'#0a0f1e',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:20}}>
             <div style={{width:56,height:56,borderRadius:'50%',border:'3px solid rgba(255,255,255,0.08)',borderTop:'3px solid #38bdf8',animation:'spin 0.9s linear infinite'}}/>
@@ -357,10 +385,9 @@ export default function Weather() {
             <div style={{position:'fixed',top:-120,right:-120,width:450,height:450,borderRadius:'50%',background:`${cond.accent}18`,filter:'blur(90px)',pointerEvents:'none',zIndex:0,transition:'background 1s'}}/>
             <div style={{position:'fixed',bottom:-160,left:-100,width:520,height:520,borderRadius:'50%',background:`${cond.accent2}0e`,filter:'blur(110px)',pointerEvents:'none',zIndex:0,transition:'background 1s'}}/>
 
-            {/* ── FIXED: Outer wrapper uses isolation:isolate to control stacking, but search sits at top z-index ── */}
             <div style={{maxWidth:920,margin:'0 auto',position:'relative',zIndex:1}}>
 
-                {/* Header */}
+                {/* ── Header ── */}
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24,animation:'fade-up 0.5s ease both'}}>
                     <div>
                         <h1 style={{fontSize:20,fontWeight:800,letterSpacing:-0.5,display:'flex',alignItems:'center',gap:8}}>
@@ -370,31 +397,35 @@ export default function Weather() {
                             {currentTime.toLocaleDateString('en',{weekday:'long',month:'long',day:'numeric'})}
                         </p>
                     </div>
-                    <button onClick={()=>setUnit(u=>u==='celsius'?'fahrenheit':'celsius')}
-                            style={{background:'rgba(255,255,255,0.07)',border:`1px solid ${cond.accent}44`,borderRadius:50,
-                                padding:'9px 20px',color:'#fff',cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:13,fontWeight:700,transition:'all 0.2s'}}
-                            onMouseEnter={e=>e.currentTarget.style.background=`${cond.accent}22`}
-                            onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,0.07)'}
-                    >{unit==='celsius'?'°C → °F':'°F → °C'}</button>
+                    <button
+                        onClick={() => setUnit(u => u === 'celsius' ? 'fahrenheit' : 'celsius')}
+                        style={{background:'rgba(255,255,255,0.07)',border:`1px solid ${cond.accent}44`,borderRadius:50,
+                            padding:'9px 20px',color:'#fff',cursor:'pointer',fontFamily:"'Space Mono',monospace",fontSize:13,fontWeight:700,transition:'all 0.2s'}}
+                        onMouseEnter={e => e.currentTarget.style.background = `${cond.accent}22`}
+                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
+                    >
+                        {unit === 'celsius' ? '°C → °F' : '°F → °C'}
+                    </button>
                 </div>
 
-                {/* ── Search — KEY FIX: position relative + z-index 9999 so dropdown floats above everything ── */}
+                {/* ── Search — z-index:9999 ensures dropdown floats above all cards ── */}
                 <div
                     ref={searchWrapperRef}
-                    style={{
-                        marginBottom: 20,
-                        animation: 'fade-up 0.5s ease 0.08s both',
-                        position: 'relative',   /* establishes stacking context for this block */
-                        zIndex: 9999,           /* sits above hero card, stat cards, everything */
-                    }}
+                    style={{marginBottom:20,animation:'fade-up 0.5s ease 0.08s both',position:'relative',zIndex:9999}}
                 >
                     <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-                        {/* Input wrapper — position relative so dropdown is anchored to it */}
-                        <div style={{flex:'1 1 260px', position:'relative'}}>
+
+                        {/* Input + dropdown */}
+                        <div style={{flex:'1 1 260px',position:'relative'}}>
+                            {/*
+                             * FIX 2: Removed duplicate onFocus prop.
+                             * Previously there were TWO onFocus handlers on this input.
+                             * Merged into a single onFocus that handles both border colour
+                             * AND showing the suggestions dropdown.
+                             */}
                             <input
                                 value={searchQuery}
                                 onChange={e => handleSearchInput(e.target.value)}
-                                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
                                 onKeyDown={e => {
                                     if (e.key === 'Escape') setShowSuggestions(false);
                                     if (e.key === 'Enter' && suggestions.length > 0) selectSuggestion(suggestions[0]);
@@ -403,7 +434,8 @@ export default function Weather() {
                                 style={{
                                     width:'100%',
                                     background:'rgba(255,255,255,0.07)',
-                                    border:'1px solid rgba(255,255,255,0.13)',
+                                    border: inputFocused ? `1px solid ${cond.accent}` : '1px solid rgba(255,255,255,0.13)',
+                                    boxShadow: inputFocused ? `0 0 0 3px ${cond.accent}22` : 'none',
                                     borderRadius:14,
                                     padding:'13px 18px',
                                     color:'#fff',
@@ -412,51 +444,41 @@ export default function Weather() {
                                     fontFamily:'Outfit',
                                     transition:'border 0.2s, box-shadow 0.2s',
                                 }}
-                                onFocus={e => {
-                                    e.target.style.borderColor = cond.accent;
-                                    e.target.style.boxShadow = `0 0 0 3px ${cond.accent}22`;
+                                onFocus={() => {
+                                    // Single onFocus — sets focus state AND shows dropdown if results exist
+                                    setInputFocused(true);
                                     if (suggestions.length > 0) setShowSuggestions(true);
                                 }}
-                                onBlur={e => {
-                                    e.target.style.borderColor = 'rgba(255,255,255,0.13)';
-                                    e.target.style.boxShadow = 'none';
-                                }}
+                                onBlur={() => setInputFocused(false)}
                             />
 
-                            {/* ── Dropdown — position absolute, high z-index, pointer-events auto ── */}
+                            {/* Dropdown */}
                             {showSuggestions && suggestions.length > 0 && (
                                 <div style={{
-                                    position: 'absolute',
-                                    top: 'calc(100% + 8px)',
-                                    left: 0,
-                                    right: 0,
-                                    background: '#141c30',
-                                    border: `1px solid ${cond.accent}44`,
-                                    borderRadius: 16,
-                                    overflow: 'hidden',
-                                    zIndex: 99999,        /* highest z-index — guaranteed above all other elements */
-                                    boxShadow: `0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05)`,
-                                    pointerEvents: 'auto',
+                                    position:'absolute',
+                                    top:'calc(100% + 8px)',
+                                    left:0,
+                                    right:0,
+                                    background:'#141c30',
+                                    border:`1px solid ${cond.accent}44`,
+                                    borderRadius:16,
+                                    overflow:'hidden',
+                                    zIndex:99999,
+                                    boxShadow:`0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05)`,
+                                    pointerEvents:'auto',
                                 }}>
-                                    {/* Dropdown header */}
                                     <div style={{padding:'8px 18px 6px',fontSize:10,color:'rgba(255,255,255,0.3)',fontFamily:"'Space Mono',monospace",letterSpacing:1.5,textTransform:'uppercase',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
                                         {suggestions.length} result{suggestions.length !== 1 ? 's' : ''} found
                                     </div>
-                                    {suggestions.map((s,i) => (
+                                    {suggestions.map((s, i) => (
                                         <div
                                             key={i}
                                             onMouseDown={e => { e.preventDefault(); selectSuggestion(s); }}
-                                            style={{
-                                                padding:'12px 18px',
-                                                cursor:'pointer',
-                                                display:'flex',
-                                                alignItems:'center',
-                                                gap:12,
+                                            style={{padding:'12px 18px',cursor:'pointer',display:'flex',alignItems:'center',gap:12,
                                                 borderBottom: i < suggestions.length-1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                                                transition:'background 0.15s',
-                                            }}
-                                            onMouseEnter={e => e.currentTarget.style.background=`${cond.accent}18`}
-                                            onMouseLeave={e => e.currentTarget.style.background='transparent'}
+                                                transition:'background 0.15s'}}
+                                            onMouseEnter={e => e.currentTarget.style.background = `${cond.accent}18`}
+                                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                                         >
                                             <span style={{fontSize:16}}>📍</span>
                                             <div>
@@ -475,36 +497,31 @@ export default function Weather() {
                         </div>
 
                         {/* Quick city chips */}
-                        {['London','Tokyo','New York','Dubai','Sydney'].map(c=>(
-                            <button key={c} onClick={()=>quickSearch(c)}
+                        {['London','Tokyo','New York','Dubai','Sydney'].map(c => (
+                            <button key={c} onClick={() => quickSearch(c)}
                                     style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:50,
                                         padding:'9px 16px',color:'rgba(255,255,255,0.65)',cursor:'pointer',fontSize:13,transition:'all 0.2s',fontFamily:'Outfit',whiteSpace:'nowrap'}}
-                                    onMouseEnter={e=>{e.currentTarget.style.background=`${cond.accent}22`;e.currentTarget.style.color='#fff';e.currentTarget.style.borderColor=`${cond.accent}66`;}}
-                                    onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.06)';e.currentTarget.style.color='rgba(255,255,255,0.65)';e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';}}
+                                    onMouseEnter={e => {e.currentTarget.style.background=`${cond.accent}22`;e.currentTarget.style.color='#fff';e.currentTarget.style.borderColor=`${cond.accent}66`;}}
+                                    onMouseLeave={e => {e.currentTarget.style.background='rgba(255,255,255,0.06)';e.currentTarget.style.color='rgba(255,255,255,0.65)';e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';}}
                             >{c}</button>
                         ))}
                     </div>
                 </div>
 
-                {/* Error */}
+                {/* Error banner */}
                 {error && (
                     <div style={{background:'rgba(239,68,68,0.15)',border:'1px solid rgba(239,68,68,0.3)',borderRadius:12,
-                        padding:'12px 18px',color:'#fca5a5',marginBottom:18,fontSize:14,animation:'fade-up 0.3s ease both'}}>{error}</div>
+                        padding:'12px 18px',color:'#fca5a5',marginBottom:18,fontSize:14,animation:'fade-up 0.3s ease both'}}>
+                        {error}
+                    </div>
                 )}
 
                 {weather && (
                     <>
-                        {/* Hero card — z-index 1, below search */}
-                        <div style={{
-                            background:'rgba(255,255,255,0.06)',backdropFilter:'blur(20px)',
-                            border:'1px solid rgba(255,255,255,0.1)',borderRadius:28,
-                            padding:'32px 28px',marginBottom:16,
-                            display:'grid',gridTemplateColumns:'1fr auto',gap:16,alignItems:'center',
-                            animation:'fade-up 0.5s ease 0.15s both',
-                            position:'relative',
-                            zIndex:1,          /* explicitly below search wrapper's z-index:9999 */
-                            overflow:'hidden',
-                        }}>
+                        {/* ── Hero card ── */}
+                        <div style={{background:'rgba(255,255,255,0.06)',backdropFilter:'blur(20px)',border:'1px solid rgba(255,255,255,0.1)',
+                            borderRadius:28,padding:'32px 28px',marginBottom:16,display:'grid',gridTemplateColumns:'1fr auto',
+                            gap:16,alignItems:'center',animation:'fade-up 0.5s ease 0.15s both',position:'relative',zIndex:1,overflow:'hidden'}}>
                             <div style={{position:'absolute',right:-70,top:-70,width:300,height:300,borderRadius:'50%',border:`1px solid ${cond.accent}18`,pointerEvents:'none'}}/>
                             <div style={{position:'absolute',right:-40,top:-40,width:200,height:200,borderRadius:'50%',border:`1px solid ${cond.accent}10`,pointerEvents:'none'}}/>
                             <div>
@@ -531,17 +548,17 @@ export default function Weather() {
                             </div>
                         </div>
 
-                        {/* Stat cards */}
+                        {/* ── Stat cards ── */}
                         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(175px,1fr))',gap:10,marginBottom:16,position:'relative',zIndex:1}}>
-                            <StatCard label="Humidity"    value={`${weather.humidity}%`}              icon="💧" accent={cond.accent} delay={0.25}/>
-                            <StatCard label="Wind"        value={`${weather.windSpeed} ${windSuffix}`} icon="💨" accent={cond.accent} delay={0.3}/>
-                            <StatCard label="Pressure"    value={`${weather.pressure} hPa`}           icon="📊" accent={cond.accent} delay={0.35}/>
-                            <StatCard label="Visibility"  value={`${weather.visibility} km`}          icon="👁️" accent={cond.accent} delay={0.4}/>
-                            <StatCard label="Cloud Cover" value={`${weather.clouds}%`}               icon="☁️" accent={cond.accent} delay={0.45}/>
-                            <StatCard label="UV Index"    value={weather.uvIndex}                    icon="☀️" accent={cond.accent} delay={0.5}/>
+                            <StatCard label="Humidity"    value={`${weather.humidity}%`}               icon="💧" accent={cond.accent} delay={0.25}/>
+                            <StatCard label="Wind"        value={`${weather.windSpeed} ${windSuffix}`}  icon="💨" accent={cond.accent} delay={0.3}/>
+                            <StatCard label="Pressure"    value={`${weather.pressure} hPa`}            icon="📊" accent={cond.accent} delay={0.35}/>
+                            <StatCard label="Visibility"  value={`${weather.visibility} km`}           icon="👁️" accent={cond.accent} delay={0.4}/>
+                            <StatCard label="Cloud Cover" value={`${weather.clouds}%`}                icon="☁️" accent={cond.accent} delay={0.45}/>
+                            <StatCard label="UV Index"    value={weather.uvIndex}                     icon="☀️" accent={cond.accent} delay={0.5}/>
                         </div>
 
-                        {/* Sunrise / UV */}
+                        {/* ── Sunrise / UV ── */}
                         {today && (
                             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16,animation:'fade-up 0.5s ease 0.45s both',position:'relative',zIndex:1}}>
                                 <div style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.09)',borderRadius:20,padding:'18px 22px',display:'flex',justifyContent:'space-around'}}>
@@ -567,22 +584,24 @@ export default function Weather() {
                             </div>
                         )}
 
-                        {/* Tabs */}
+                        {/* ── Tabs ── */}
                         <div style={{display:'flex',gap:3,marginBottom:14,background:'rgba(255,255,255,0.05)',
                             padding:4,borderRadius:14,width:'fit-content',animation:'fade-up 0.5s ease 0.55s both',position:'relative',zIndex:1}}>
-                            {['now','hourly','7-day'].map(t=>(
-                                <button key={t} onClick={()=>setActiveTab(t)} style={{
-                                    background:activeTab===t?cond.accent:'transparent',border:'none',borderRadius:10,
-                                    padding:'8px 20px',color:activeTab===t?'#000':'rgba(255,255,255,0.55)',
-                                    fontWeight:activeTab===t?700:400,cursor:'pointer',fontFamily:'Outfit',fontSize:14,transition:'all 0.2s',
+                            {['now','hourly','7-day'].map(t => (
+                                <button key={t} onClick={() => setActiveTab(t)} style={{
+                                    background: activeTab===t ? cond.accent : 'transparent',
+                                    border:'none',borderRadius:10,padding:'8px 20px',
+                                    color: activeTab===t ? '#000' : 'rgba(255,255,255,0.55)',
+                                    fontWeight: activeTab===t ? 700 : 400,
+                                    cursor:'pointer',fontFamily:'Outfit',fontSize:14,transition:'all 0.2s',
                                 }}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
                             ))}
                         </div>
 
-                        {/* Hourly */}
+                        {/* ── Hourly tab ── */}
                         {activeTab==='hourly' && (
                             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(100px,1fr))',gap:10,animation:'fade-up 0.4s ease both',position:'relative',zIndex:1}}>
-                                {hourly.map((h,i)=>(
+                                {hourly.map((h, i) => (
                                     <div key={i} style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.09)',
                                         borderRadius:16,padding:'14px 10px',textAlign:'center',transition:'all 0.2s',cursor:'default'}}
                                          onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.1)';e.currentTarget.style.transform='translateY(-3px)';}}
@@ -591,7 +610,9 @@ export default function Weather() {
                                         <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:"'Space Mono',monospace"}}>
                                             {new Date(h.time).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
                                         </div>
-                                        <div style={{margin:'8px 0'}}><WeatherIcon condition={wmoToCondition(h.code)} size={32} accent={cond.accent} accent2="#fff"/></div>
+                                        <div style={{margin:'8px 0'}}>
+                                            <WeatherIcon condition={wmoToCondition(h.code)} size={32} accent={cond.accent} accent2="#fff"/>
+                                        </div>
                                         <div style={{fontSize:16,fontWeight:700}}>{h.temp}{tempSuffix}</div>
                                         <div style={{fontSize:11,color:'#38bdf8',marginTop:4}}>{h.precip}% 💧</div>
                                     </div>
@@ -599,24 +620,24 @@ export default function Weather() {
                             </div>
                         )}
 
-                        {/* 7-day */}
+                        {/* ── 7-day tab ── */}
                         {activeTab==='7-day' && (
                             <div style={{display:'flex',flexDirection:'column',gap:8,animation:'fade-up 0.4s ease both',position:'relative',zIndex:1}}>
-                                {forecast.map((d,i)=><ForecastRow key={i} {...d} accent={cond.accent}/>)}
+                                {forecast.map((d, i) => <ForecastRow key={i} {...d} accent={cond.accent}/>)}
                             </div>
                         )}
 
-                        {/* Now */}
+                        {/* ── Now tab ── */}
                         {activeTab==='now' && (
                             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,animation:'fade-up 0.4s ease both',position:'relative',zIndex:1}}>
                                 <div style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.09)',borderRadius:20,padding:20}}>
                                     <h3 style={{fontSize:11,color:'rgba(255,255,255,0.4)',textTransform:'uppercase',letterSpacing:1.5,fontFamily:"'Space Mono',monospace",marginBottom:16}}>Atmosphere</h3>
                                     {[
-                                        {label:'Humidity',val:weather.humidity,max:100,color:'#38bdf8'},
-                                        {label:'Cloud Cover',val:weather.clouds,max:100,color:'#94a3b8'},
-                                        {label:'Wind Intensity',val:Math.min((unit==='celsius'?weather.windSpeed*6:weather.windSpeed*3),100),max:100,color:cond.accent},
-                                        {label:'UV Risk',val:Math.min((weather.uvIndex/11)*100,100),max:100,color:'#f97316'},
-                                    ].map(({label,val,max,color})=>(
+                                        {label:'Humidity',       val:weather.humidity,                                                                    max:100, color:'#38bdf8'},
+                                        {label:'Cloud Cover',    val:weather.clouds,                                                                       max:100, color:'#94a3b8'},
+                                        {label:'Wind Intensity', val:Math.min((unit==='celsius' ? weather.windSpeed*6 : weather.windSpeed*3), 100),         max:100, color:cond.accent},
+                                        {label:'UV Risk',        val:Math.min((weather.uvIndex/11)*100, 100),                                              max:100, color:'#f97316'},
+                                    ].map(({label, val, max, color}) => (
                                         <div key={label} style={{marginBottom:14}}>
                                             <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
                                                 <span style={{fontSize:13,color:'rgba(255,255,255,0.55)'}}>{label}</span>
@@ -635,12 +656,20 @@ export default function Weather() {
                                             <circle cx="65" cy="65" r="60" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="1"/>
                                             <circle cx="65" cy="65" r="44" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
                                             <circle cx="65" cy="65" r="24" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" strokeWidth="1"/>
-                                            {['N','NE','E','SE','S','SW','W','NW'].map((d,i)=>{
-                                                const a=i*45, r=i%2===0?63:55;
-                                                return <text key={d} x={65+r*Math.sin(a*Math.PI/180)} y={65-r*Math.cos(a*Math.PI/180)}
-                                                             textAnchor="middle" dominantBaseline="middle"
-                                                             fill={i%2===0?'rgba(255,255,255,0.6)':'rgba(255,255,255,0.25)'}
-                                                             fontSize={i%2===0?11:8} fontFamily="Outfit" fontWeight={i%2===0?600:400}>{d}</text>;
+                                            {['N','NE','E','SE','S','SW','W','NW'].map((d, i) => {
+                                                const a = i*45, r = i%2===0 ? 63 : 55;
+                                                return (
+                                                    <text key={d}
+                                                          x={65+r*Math.sin(a*Math.PI/180)}
+                                                          y={65-r*Math.cos(a*Math.PI/180)}
+                                                          textAnchor="middle" dominantBaseline="middle"
+                                                          fill={i%2===0 ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.25)'}
+                                                          fontSize={i%2===0 ? 11 : 8}
+                                                          fontFamily="Outfit"
+                                                          fontWeight={i%2===0 ? 600 : 400}>
+                                                        {d}
+                                                    </text>
+                                                );
                                             })}
                                             <g transform={`rotate(${weather.windDir??0} 65 65)`}>
                                                 <polygon points="65,16 70,56 65,50 60,56" fill={cond.accent} opacity="0.95"/>
@@ -659,32 +688,18 @@ export default function Weather() {
                     </>
                 )}
 
-                <p
-                    style={{
-                        textAlign: "center",
-                        color: "rgba(255,255,255,0.6)",
-                        fontSize: 12,
-                        marginTop: 32,
-                        fontFamily: "'Space Mono', monospace",
-                        letterSpacing: "0.5px"
-                    }}
-                >
-                    Made with ❤️ by{" "}
-                    <a
-                        href="https://acharyanischal.com.np"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                            color: "#ffffff",
-                            textDecoration: "none",
-                            fontWeight: 600,
-                            transition: "0.3s ease"
-                        }}
-                        onMouseOver={(e) => (e.target.style.opacity = "0.7")}
-                        onMouseOut={(e) => (e.target.style.opacity = "1")}
-                    >
+                {/* Footer */}
+                <p style={{
+                    textAlign:'center',color:'rgba(255,255,255,0.6)',fontSize:12,marginTop:32,
+                    fontFamily:"'Space Mono',monospace",letterSpacing:'0.5px'
+                }}>
+                    Made with ❤️ by{' '}
+                    <a href="https://acharyanischal.com.np" target="_blank" rel="noopener noreferrer"
+                       style={{color:'#ffffff',textDecoration:'none',fontWeight:600,transition:'0.3s ease'}}
+                       onMouseOver={e => (e.target.style.opacity='0.7')}
+                       onMouseOut={e => (e.target.style.opacity='1')}>
                         Nischal Acharya
-                    </a>{" "}
+                    </a>{' '}
                     © {new Date().getFullYear()} All rights reserved.
                 </p>
             </div>
